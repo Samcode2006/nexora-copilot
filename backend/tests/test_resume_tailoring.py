@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any
 
@@ -25,7 +26,10 @@ from app.ai.resume_tailoring import (
     generate_cover_letter,
     tailor_resume,
 )
-from app.ai.resume_tailoring.schemas import GeneratedClaimDraft
+from app.ai.resume_tailoring.schemas import (
+    CANONICAL_COVER_LETTER_CLOSING,
+    CoverLetter,
+)
 
 
 def _fact(
@@ -238,7 +242,7 @@ def test_cover_letter_has_structured_personalized_content(complete_profile, sele
     assert "Python Backend Intern" in letter.opening_paragraph.text
     assert letter.relevant_experience_paragraph is not None
     assert letter.role_relevance_paragraph is not None
-    assert letter.closing_paragraph
+    assert letter.closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
     assert letter.sign_off_name is not None
     assert letter.sign_off_name.text == "Maya Patel"
 
@@ -464,6 +468,66 @@ def test_cover_letter_provider_claims_are_validated(complete_profile, selected_j
     assert any("Managed a team" in item.proposed_text for item in letter.validation_report.omitted_claims)
 
 
+def test_cover_letter_canonical_closing_passes_all_model_validation_paths(
+    complete_profile, selected_job
+) -> None:
+    letter = generate_cover_letter(complete_profile, selected_job, llm_service=LLMService())
+    payload = letter.model_dump(mode="json")
+
+    assert letter.closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
+    assert CoverLetter(**payload).closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
+    assert CoverLetter.model_validate(payload).closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
+    assert (
+        CoverLetter.model_validate_json(json.dumps(payload)).closing_paragraph
+        == CANONICAL_COVER_LETTER_CLOSING
+    )
+
+
+@pytest.mark.parametrize(
+    "unsupported_closing",
+    [
+        "I led a team of 12 engineers and delivered 40% faster.",
+        "I worked at Acme Robotics for three years.",
+        "I am a certified cloud architect with a master's degree.",
+        "I improved revenue by 37%.",
+    ],
+)
+def test_cover_letter_rejects_noncanonical_closing_on_all_validation_paths(
+    complete_profile, selected_job, unsupported_closing
+) -> None:
+    letter = generate_cover_letter(complete_profile, selected_job, llm_service=LLMService())
+    payload = letter.model_dump(mode="json")
+    payload["closing_paragraph"] = unsupported_closing
+
+    with pytest.raises(ValidationError):
+        CoverLetter(**payload)
+    with pytest.raises(ValidationError):
+        CoverLetter.model_validate(payload)
+    with pytest.raises(ValidationError):
+        CoverLetter.model_validate_json(json.dumps(payload))
+
+
+def test_provider_cannot_override_canonical_cover_letter_closing(
+    complete_profile, selected_job
+) -> None:
+    unexpected_draft = {
+        "relevant_experience": None,
+        "role_relevance": None,
+        "closing_paragraph": "I earned three certifications and increased performance by 50%.",
+    }
+    provider = _QueueProvider([deepcopy(unexpected_draft), deepcopy(unexpected_draft)])
+
+    letter = generate_cover_letter(
+        complete_profile,
+        selected_job,
+        llm_service=LLMService(provider=provider),
+    )
+
+    assert provider.calls == 2
+    assert letter.generation.is_fallback
+    assert letter.closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
+
+
 def test_valid_provider_cover_letter_claim_is_used(complete_profile, selected_job) -> None:
     provider = _QueueProvider(
         [
@@ -484,6 +548,7 @@ def test_valid_provider_cover_letter_claim_is_used(complete_profile, selected_jo
     assert letter.relevant_experience_paragraph is not None
     assert letter.relevant_experience_paragraph.text == "Built dashboards in Python."
     assert letter.generation.generation_method == "llm_validated"
+    assert letter.closing_paragraph == CANONICAL_COVER_LETTER_CLOSING
 
 
 def test_one_page_preference_limits_project_entries(complete_profile, selected_job) -> None:

@@ -4,7 +4,11 @@ from importlib import import_module
 import pytest
 
 from app.ai.resume_intelligence import ResumeParseError, parse_resume
-from app.ai.resume_intelligence.parser import _identify_sections
+from app.ai.resume_intelligence import parser as resume_parser
+from app.ai.resume_intelligence.parser import (
+    DEFAULT_MAX_FILE_BYTES,
+    _identify_sections,
+)
 
 
 def _load_pymupdf():
@@ -15,6 +19,18 @@ def _load_pymupdf():
             return import_module("fitz")
         except ImportError:
             pytest.skip("PyMuPDF is not installed")
+
+
+def _pdf_content_of_size(size: int) -> bytes:
+    pymupdf = _load_pymupdf()
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Nexora resume parser size fixture")
+    content = document.tobytes()
+    document.close()
+    if len(content) > size:
+        pytest.fail(f"Generated PDF fixture ({len(content)} bytes) exceeds target size {size}.")
+    return content + b" " * (size - len(content))
 
 
 def test_rejects_unsupported_file_type() -> None:
@@ -50,6 +66,54 @@ def test_rejects_empty_and_oversized_files() -> None:
     with pytest.raises(ResumeParseError) as error:
         parse_resume(b"%PDF-data", "resume.pdf", max_file_bytes=5)
     assert error.value.code == "file_too_large"
+
+
+@pytest.mark.parametrize(
+    "size",
+    [DEFAULT_MAX_FILE_BYTES - 1, DEFAULT_MAX_FILE_BYTES],
+    ids=["one-byte-below-limit", "exact-limit"],
+)
+def test_accepts_valid_pdf_at_or_below_default_size_limit(size: int) -> None:
+    content = _pdf_content_of_size(size)
+    assert len(content) == size
+
+    result = parse_resume(content, "resume.pdf")
+
+    assert result.source_format == "pdf"
+    assert "Nexora resume parser size fixture" in result.text
+
+
+def test_rejects_file_one_byte_above_default_limit_before_parsing(monkeypatch) -> None:
+    def fail_if_pdf_parser_runs(_content: bytes) -> tuple[str, list[str]]:
+        pytest.fail("PDF parsing must not run for an oversized file.")
+
+    monkeypatch.setattr(resume_parser, "_extract_pdf", fail_if_pdf_parser_runs)
+    content = b"%PDF-" + b"x" * (DEFAULT_MAX_FILE_BYTES + 1 - len(b"%PDF-"))
+
+    with pytest.raises(ResumeParseError) as error:
+        parse_resume(content, "resume.pdf")
+
+    assert error.value.code == "file_too_large"
+    assert str(error.value) == "The resume exceeds the 5,000,000-byte size limit."
+
+
+def test_explicit_custom_size_limit_override_is_preserved() -> None:
+    content = _pdf_content_of_size(DEFAULT_MAX_FILE_BYTES + 1)
+
+    result = parse_resume(
+        content,
+        "resume.pdf",
+        max_file_bytes=DEFAULT_MAX_FILE_BYTES + 1,
+    )
+
+    assert result.source_format == "pdf"
+    assert "Nexora resume parser size fixture" in result.text
+
+
+def test_blank_filename_retains_validation_error() -> None:
+    with pytest.raises(ResumeParseError) as error:
+        parse_resume(b"%PDF-data", "   ")
+    assert error.value.code == "invalid_filename"
 
 
 def test_extracts_docx_text_and_recognizes_sections() -> None:

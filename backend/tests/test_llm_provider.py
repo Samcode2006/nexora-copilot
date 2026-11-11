@@ -86,7 +86,7 @@ def test_response_not_matching_schema_uses_and_labels_fallback() -> None:
     )
     assert result.value.summary == "Deterministic fallback."
     assert result.is_fallback is True
-    assert "did not match SampleOutput" in (result.fallback_reason or "")
+    assert result.fallback_reason == "Gemini returned invalid structured output."
 
 
 class _FailingModels:
@@ -108,8 +108,8 @@ def test_provider_error_uses_and_labels_feature_fallback(google_sdk_unavailable:
     assert result.value.summary == "Deterministic fallback."
     assert result.provider == "deterministic_fallback"
     assert result.is_fallback is True
-    # The reason must come from the client failure, not an unrelated error such as a missing SDK.
-    assert result.fallback_reason == "Gemini request failed: offline"
+    # Preserve a safe category while omitting raw provider details.
+    assert result.fallback_reason == "Gemini request failed: connection error."
 
 
 class _BuggyModels:

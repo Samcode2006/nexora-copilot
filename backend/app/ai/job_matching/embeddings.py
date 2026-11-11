@@ -14,6 +14,18 @@ DEFAULT_SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 class EmbeddingProviderError(RuntimeError):
     """Raised when semantic embeddings cannot be generated or validated."""
 
+    diagnostic_exception_type: str | None = None
+
+
+def _embedding_error(
+    message: str,
+    *,
+    diagnostic_exception_type: str | None = None,
+) -> EmbeddingProviderError:
+    error = EmbeddingProviderError(message)
+    error.diagnostic_exception_type = diagnostic_exception_type
+    return error
+
 
 class EmbeddingProvider(Protocol):
     name: str
@@ -57,21 +69,33 @@ class SentenceTransformerEmbeddingProvider:
             return scores
         except EmbeddingProviderError:
             raise
-        except Exception as exc:
-            raise EmbeddingProviderError(
-                f"Sentence Transformers could not produce embeddings with {self.model_name}."
-            ) from exc
+        # Sentence Transformers can surface version-specific backend errors;
+        # convert those to a safe provider error for keyword fallback.
+        except Exception as exc:  # noqa: BLE001
+            raise _embedding_error(
+                "Sentence Transformers could not produce embeddings.",
+                diagnostic_exception_type=type(exc).__name__,
+        ) from None
 
     def _get_model(self):
         with self._model_lock:
             if self._model is None:
                 try:
                     from sentence_transformers import SentenceTransformer
-                except ImportError as exc:
-                    raise EmbeddingProviderError(
-                        "sentence-transformers is not installed. Install the matching extra."
-                    ) from exc
-                self._model = SentenceTransformer(self.model_name)
+                except ImportError:
+                    raise _embedding_error(
+                        "sentence-transformers is not installed. Install the matching extra.",
+                        diagnostic_exception_type="ImportError",
+                    ) from None
+                try:
+                    self._model = SentenceTransformer(self.model_name)
+                # Model initialization errors vary across Torch/Transformers
+                # versions and must be sanitized at this optional boundary.
+                except Exception as exc:  # noqa: BLE001
+                    raise _embedding_error(
+                        "Sentence Transformers could not load the configured model.",
+                        diagnostic_exception_type=type(exc).__name__,
+        ) from None
             return self._model
 
 

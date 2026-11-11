@@ -294,8 +294,12 @@ class InterviewSession(StrictModel):
         for index, turn in enumerate(self.turn_history):
             if turn.question.question_id != turn.answer.question_id or turn.question.question_id != turn.evaluation.question_id:
                 raise ValueError("each turn question, answer, and evaluation must use the same question id")
-            if self.question_history[index].question_id != turn.question.question_id:
-                raise ValueError("turn history must align with question history")
+            if self.question_history[index] != turn.question:
+                raise ValueError("turn question must match the full question-history record")
+            if self.answer_history[index] != turn.answer:
+                raise ValueError("turn answer must match the full answer-history record")
+            if self.evaluation_history[index] != turn.evaluation:
+                raise ValueError("turn evaluation must match the full evaluation-history record")
         return self
 
 

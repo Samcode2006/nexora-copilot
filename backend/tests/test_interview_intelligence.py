@@ -23,7 +23,6 @@ from app.ai.interview_intelligence import (
     start_interview,
     submit_interview_answer,
 )
-from app.ai.interview_intelligence.schemas import AnswerEvaluationDraft
 from app.ai.job_intelligence.schemas import JobListing
 from app.ai.providers import LLMProviderError, LLMService
 from app.ai.resume_intelligence.profile_schemas import (
@@ -186,9 +185,7 @@ def test_generates_all_interview_categories(category, profile, job):
     assert all(question.interview_type == category for question in questions)
     if category == "project_based":
         assert all(any(ref.profile_path.startswith("projects[") for ref in question.profile_evidence_references) for question in questions)
-    elif category == "role_specific":
-        assert all(question.relevant_job_requirement in job.required_skills for question in questions)
-    elif category == "technical":
+    elif category in {"role_specific", "technical"}:
         assert all(question.relevant_job_requirement in job.required_skills for question in questions)
 
 
@@ -285,6 +282,8 @@ def test_question_count_limits_and_unique_variations(profile, job):
         generate_interview_questions(profile, job, "technical", "beginner", 0, llm_service=LLMService())
     with pytest.raises(ValidationError):
         generate_interview_questions(profile, job, "technical", "beginner", 31, llm_service=LLMService())
+    with pytest.raises(ValueError, match="question_count must be an integer"):
+        generate_interview_questions(profile, job, "technical", "beginner", "2", llm_service=LLMService())
 
 
 def test_maximum_question_count_remains_distinct(profile, job):
@@ -523,14 +522,142 @@ def test_provider_failure_generation_falls_back_without_fake_llm_claim(profile, 
     assert question.generation_provider == "deterministic_fallback"
 
 
-def test_session_serialization_hides_and_optionally_preserves_internal_material(profile, job):
-    session = start_interview(profile, job, "technical", "intermediate", 1, llm_service=LLMService())
-    public_payload = json.loads(serialize_interview_session(session))
-    assert "expected_answer_points" not in public_payload["question_history"][0]
-    internal_payload = serialize_interview_session(session, include_evaluation_material=True)
-    restored = InterviewSession.model_validate_json(internal_payload)
-    assert restored.question_history[0].expected_answer_points
-    assert restored.question_history[0].evaluation_rubric.weights.technical_correctness > 0
+def _session_with_completed_turns(profile, job, *, completed_turns: int, planned_questions: int):
+    session = start_interview(
+        profile,
+        job,
+        "technical",
+        "intermediate",
+        planned_questions,
+        llm_service=LLMService(),
+    )
+    for index in range(completed_turns):
+        session = submit_interview_answer(
+            session,
+            f"Answer {index + 1}: Python uses indentation, and I would validate the input.",
+            llm_service=LLMService(),
+        )
+    return session
+
+
+_EVALUATOR_ONLY_FIELDS = (
+    "expected_answer_points",
+    "evaluation_rubric",
+    "evaluation_keywords",
+)
+
+
+def _serialized_question_objects(payload):
+    return [
+        *payload["question_history"],
+        *(turn["question"] for turn in payload["turn_history"]),
+    ]
+
+
+def test_public_session_serialization_omits_evaluator_fields_and_is_not_resumable(profile, job):
+    session = _session_with_completed_turns(
+        profile, job, completed_turns=2, planned_questions=4
+    )
+    public_json = serialize_interview_session(session)
+    public_payload = json.loads(public_json)
+
+    question_payloads = _serialized_question_objects(public_payload)
+    assert len(public_payload["question_history"]) > len(public_payload["turn_history"])
+    for question_payload in question_payloads:
+        for field_name in _EVALUATOR_ONLY_FIELDS:
+            assert field_name not in question_payload
+
+    with pytest.raises(ValidationError):
+        InterviewSession.model_validate_json(public_json)
+
+
+def test_trusted_session_serialization_round_trips_full_multiturn_history(profile, job):
+    session = _session_with_completed_turns(
+        profile, job, completed_turns=2, planned_questions=4
+    )
+    internal_json = serialize_interview_session(
+        session, include_evaluation_material=True
+    )
+    payload = json.loads(internal_json)
+    original_questions = {question.question_id: question for question in session.question_history}
+
+    question_payloads = _serialized_question_objects(payload)
+    assert len(payload["question_history"]) == 3
+    assert len(payload["turn_history"]) == 2
+    for question_payload in question_payloads:
+        original = original_questions[question_payload["question_id"]]
+        for field_name in _EVALUATOR_ONLY_FIELDS:
+            assert field_name in question_payload
+        assert question_payload["expected_answer_points"] == original.expected_answer_points
+        assert question_payload["evaluation_rubric"] == original.evaluation_rubric.model_dump(
+            mode="json"
+        )
+        assert question_payload["evaluation_keywords"] == original.evaluation_keywords
+
+    restored = InterviewSession.model_validate_json(internal_json)
+    assert restored.question_history == session.question_history
+    assert restored.answer_history == session.answer_history
+    assert restored.evaluation_history == session.evaluation_history
+    assert restored.turn_history == session.turn_history
+    assert restored.current_question_index == 2
+
+
+def test_reconstructed_multiturn_session_accepts_answer_and_selects_next(profile, job):
+    session = _session_with_completed_turns(
+        profile, job, completed_turns=2, planned_questions=4
+    )
+    restored = InterviewSession.model_validate_json(
+        serialize_interview_session(session, include_evaluation_material=True)
+    )
+
+    resumed = submit_interview_answer(
+        restored,
+        "The API validates input, handles errors, and has automated tests.",
+        llm_service=LLMService(),
+    )
+
+    assert resumed.status == "in_progress"
+    assert (
+        len(resumed.answer_history)
+        == len(resumed.evaluation_history)
+        == len(resumed.turn_history)
+        == 3
+    )
+    assert len(resumed.question_history) == 4
+    assert resumed.current_question_index == 3
+    assert resumed.question_history[-1].question_id not in {
+        turn.question.question_id for turn in resumed.turn_history
+    }
+    assert resumed.question_history[-1].selection_reason
+    assert resumed.question_history[-1].selection_reason != (
+        "Initial question selected from the interview category and job context."
+    )
+
+
+@pytest.mark.parametrize(
+    ("history_name", "field_name"),
+    [
+        ("question_history", "question_text"),
+        ("answer_history", "answer_text"),
+        ("evaluation_history", "strengths"),
+    ],
+)
+def test_session_deserialization_rejects_tampered_duplicate_history(
+    profile, job, history_name, field_name
+):
+    session = _session_with_completed_turns(
+        profile, job, completed_turns=1, planned_questions=3
+    )
+    payload = json.loads(
+        serialize_interview_session(session, include_evaluation_material=True)
+    )
+    if field_name == "strengths":
+        payload[history_name][0][field_name].append("Tampered evaluation history.")
+    else:
+        payload[history_name][0][field_name] = "Tampered duplicate history content."
+
+    with pytest.raises(ValidationError):
+        InterviewSession.model_validate_json(json.dumps(payload))
 
 
 def test_no_experience_does_not_turn_hr_questions_into_claims(profile, job):

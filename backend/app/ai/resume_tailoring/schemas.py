@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.ai.job_matching.schemas import JobMatch
 from app.ai.job_intelligence.schemas import JobListing
+from app.ai.job_matching.schemas import JobMatch
 from app.ai.resume_intelligence.profile_schemas import StudentProfile
 
 Tone = Literal["concise", "professional", "technical", "ats_friendly"]
 ClaimStatus = Literal["supported", "needs_review"]
 SourceType = Literal["student_profile", "job_listing"]
+CANONICAL_COVER_LETTER_CLOSING = (
+    "Thank you for considering my application. "
+    "I would welcome the opportunity to discuss my application further."
+)
 
 
 class StrictModel(BaseModel):
@@ -204,6 +208,13 @@ class CoverLetter(StrictModel):
     validation_report: ValidationReport
     generation: GenerationMetadata
     review: DocumentReviewMetadata = Field(default_factory=DocumentReviewMetadata)
+
+    @field_validator("closing_paragraph")
+    @classmethod
+    def _closing_paragraph_must_be_canonical(cls, value: str) -> str:
+        if value != CANONICAL_COVER_LETTER_CLOSING:
+            raise ValueError("closing_paragraph must use the canonical neutral closing")
+        return value
 
 
 class GeneratedClaimDraft(StrictModel):
