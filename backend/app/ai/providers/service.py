@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections.abc import Callable
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
+
+from app.core.config import Settings, get_settings
 
 from .base import LLMProvider, LLMProviderError, LLMResult, _provider_error
 from .gemini import GeminiProvider
@@ -142,12 +143,18 @@ class LLMService:
         )
 
 
-def create_llm_service() -> LLMService:
+def create_llm_service(settings: Settings | None = None) -> LLMService:
     """Use Gemini when credentials exist; otherwise use feature fallbacks."""
-    if not os.getenv("GEMINI_API_KEY"):
+    settings = settings or get_settings()
+    if not settings.gemini_api_key:
         return LLMService()
     try:
-        return LLMService(provider=GeminiProvider())
+        return LLMService(
+            provider=GeminiProvider(
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+            )
+        )
     except LLMProviderError as exc:
         return _initialization_fallback(
             exception_type=(

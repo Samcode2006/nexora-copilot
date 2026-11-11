@@ -32,6 +32,7 @@ export type Profile = {
   cgpa: string | null;
   backlogs: number | null;
   branch: string | null;
+  eligible_locations: string[] | null;
   created_at: string;
   updated_at: string;
 };

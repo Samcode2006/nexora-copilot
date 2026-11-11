@@ -7,7 +7,7 @@ from sqlalchemy.pool import NullPool
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import profile  # noqa: F401  (register models)
+from app.db.models import profile, student_data  # noqa: F401  (register models)
 from app.db.url import prepare_async_url
 from app.db.version_table import install_version_table_protection
 

@@ -1,6 +1,6 @@
 # NEXORA Backend Progress
 
-Owner: Technical Lead & Backend Lead. Branch: `feat/backend-foundation`.
+Owner: Technical Lead & Backend Lead. Branch: `main` (per the backend roadmap).
 Rule: no secrets in this file. Update after every task.
 
 ## Verification levels
@@ -21,13 +21,14 @@ Rule: no secrets in this file. Update after every task.
 | 5 | DB session, RLS identity propagation, Alembic (fail-fast on missing role), `docs/db-role.sql` | yes | yes | **yes** | no |
 | 6 | `GET /api/v1/profile/me` | yes | yes | **yes** (HS256 test tokens) | no |
 | F1 | Frontend Supabase Auth + Bearer token to FastAPI | yes | yes (tsc, eslint, build, bundle scan) | n/a | no (browser checklist not run) |
+| P1 | Student-data schema foundation: consents, resume metadata, profile facts/revisions, tasks, RLS and mutation guards | yes | yes (compile, Ruff, Alembic SQL render) | **yes** (PostgreSQL 17 stub; 9 integration tests; downgrade/upgrade) | no |
 
-Review checkpoint: stopped after Task 6.
+Review checkpoint: Phase 1 foundation implemented and locally PostgreSQL-tested; live Supabase verification remains open.
 
 ### Later (not started)
 | # | Task |
 |---|---|
-| 7 | Schema v1 and RLS (agree names with Members 2 and 3 first) |
+| 7 | Remaining schema v1 tables and RLS (agree names with Members 2 and 3 first) |
 | 8 | Profile, facts, preferences and consent APIs |
 | 9 | Evidence Ledger model and validation |
 | 10 | Documents and versioning |
@@ -58,6 +59,8 @@ The SQL logic is proven on local Postgres 17. These items depend on Supabase its
 - DB: SQLAlchemy async + asyncpg, Alembic; app role `nexora_app`; RLS as second layer.
 - RLS policies read `request.jwt.claim.sub` directly (same value as `auth.uid()`), so the app role needs no grants on the `auth` schema.
 - Migrations that grant to `nexora_app` must first check that it exists and raise an error if not (no silent skips).
+- Migration 0003 also requires the restricted `nexora_deleter` NOLOGIN role; Section 1 of `docs/db-role.sql` creates or validates both roles.
+- Profile-fact edits and status revisions are snapshotted by a database trigger. Revision rows cannot be directly updated/deleted by the runtime; uncited-fact deletion removes snapshots through a guarded trigger owned by `nexora_deleter`.
 - `alembic_version` is protected by an SQLAlchemy `after_create` hook installed in `alembic/env.py` (`app/db/version_table.py`), not by a migration: Alembic creates the table before migration 0001 runs, and `stamp`/`ensure_version` create it without running any migration.
 - `nexora_app` is NOT granted to `postgres` permanently. The SQL Editor RLS test grants it inside a rolled-back transaction.
 - Frontend uses Supabase for authentication only; all NEXORA data goes through FastAPI.
@@ -73,7 +76,18 @@ The SQL logic is proven on local Postgres 17. These items depend on Supabase its
 6. Run `docs/db-role.sql` sections 2, 3 and 4.
 7. From `backend/`: `$env:RUN_DB_TESTS='1'; .\.venv\Scripts\python -m pytest -q`.
 
+For Phase 1, repeat the migration and database test steps only after confirming that the new `nexora_deleter` role exists and is NOLOGIN. The disposable Postgres run does not verify Supabase role-ownership transfer behavior.
+
 ## Log
+
+### 2026-11-11 Phase 1 student-data schema foundation
+- Added Alembic revision `0003_student_data_foundation.py`: `profile_consents`, metadata-only `resumes`, typed/current `profile_facts`, append-only `profile_fact_revisions`, and `tasks`; extended `profiles.eligible_locations`.
+- Added RLS policies and explicit runtime grants. `nexora_app` cannot mutate fact revisions or task configuration. A NOLOGIN `nexora_deleter` owns the guarded fact-revision cleanup trigger; its membership to `postgres` is temporary during the migration.
+- SQLAlchemy models and profile response typings now include the new tables and eligible locations. Resume table stores no content or storage path.
+- Added PostgreSQL integration coverage for role boundaries, RLS, ownership, resume metadata and size bounds, revision snapshots and immutability, cited-fact deletion, and task uniqueness/state/grants.
+- Local validation: Alembic upgrade, downgrade to `0002`, and upgrade to head all succeeded on disposable PostgreSQL 17; **9 DB integration tests passed**; changed Python files compile; Ruff passed; `git diff --check` passed.
+- Not live verified against Supabase. The full backend suite could not complete in this environment: the optional `google-genai` SDK is absent for two provider tests, and an isolated `tests/test_errors.py::test_404_envelope` run stalled. The frontend build also cannot resolve dependencies in the current `node_modules` tree; no dependency install was attempted.
+- Resume database limit confirmed by owner as 5,242,880 bytes (5 MiB), matching Phase 0 `RESUME_MAX_BYTES`; integration must pass that configured value to `parse_resume`, whose standalone default remains 5,000,000 bytes.
 
 ### 2026-11-10 Task 0
 - Found existing local repo with `.env` and briefs staged. Added root `.gitignore`, unstaged them (index only, files untouched).

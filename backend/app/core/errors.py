@@ -14,7 +14,9 @@ _STATUS_CODES = {
     404: "NOT_FOUND",
     405: "METHOD_NOT_ALLOWED",
     409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
     422: "VALIDATION_ERROR",
+    415: "UNSUPPORTED_MEDIA_TYPE",
     429: "RATE_LIMITED",
 }
 
@@ -22,11 +24,19 @@ _STATUS_CODES = {
 class AppError(Exception):
     """Domain error rendered in the standard envelope."""
 
-    def __init__(self, status_code: int, code: str, message: str, details: list | None = None):
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        details: list | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details or []
+        self.headers = headers
 
 
 def error_response(
@@ -42,7 +52,9 @@ def error_response(
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError):
-        return error_response(exc.status_code, exc.code, exc.message, exc.details)
+        return error_response(
+            exc.status_code, exc.code, exc.message, exc.details, headers=exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError):

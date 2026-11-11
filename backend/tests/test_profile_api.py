@@ -21,3 +21,11 @@ async def test_profile_me_ignores_client_supplied_id(client):
 async def test_profile_in_openapi(client):
     paths = (await client.get("/api/v1/openapi.json")).json()["paths"]
     assert "/api/v1/profile/me" in paths
+
+
+async def test_student_data_and_fact_routes_in_openapi(client):
+    paths = (await client.get("/api/v1/openapi.json")).json()["paths"]
+    assert "/api/v1/profile/me/consents" in paths
+    assert "/api/v1/profile/facts" in paths
+    assert "/api/v1/resumes" in paths
+    assert "/api/v1/tasks/{task_id}" in paths

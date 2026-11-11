@@ -9,8 +9,8 @@
 --   3. Run SECTION 2 here.                 -> post-migration fixes (safe to repeat)
 --   4. Run SECTION 3 and SECTION 4 here.   -> read-only checks and an RLS test
 --
--- The role MUST exist before step 2. Migrations 0001 and 0002 stop with an error
--- ("Role nexora_app does not exist") if it is missing, and nothing is applied.
+-- All three roles MUST exist before step 2. Migrations stop with an error
+-- if either is missing, and nothing is applied.
 -- SECTION 2 is kept as a recovery step for databases migrated by an earlier
 -- version of 0001/0002 that skipped the grants instead of failing.
 --
@@ -29,7 +29,9 @@
 -- =============================================================================
 -- SECTION 1: create the role (before migrations)
 -- =============================================================================
--- Creates nexora_app if it is missing. If it already exists, the password is
+-- Creates nexora_app plus the restricted non-login nexora_deleter and
+-- nexora_maintenance roles if they are missing.
+-- If nexora_app already exists, the password is
 -- left unchanged and the script stops if the role is misconfigured: an elevated
 -- attribute, NOLOGIN, or an expired VALID UNTIL. Problems are reported, not
 -- silently changed.
@@ -37,6 +39,8 @@ DO $setup$
 DECLARE
   pw constant text := '<STRONG_PASSWORD>';  -- replace in the SQL Editor only
   r  pg_roles%ROWTYPE;
+  d  pg_roles%ROWTYPE;
+  m  pg_roles%ROWTYPE;
   problems text[] := '{}';
 BEGIN
   SELECT * INTO r FROM pg_roles WHERE rolname = 'nexora_app';
@@ -71,6 +75,45 @@ BEGIN
         USING HINT = 'Review the role manually. For NOLOGIN only: ALTER ROLE nexora_app LOGIN;';
     END IF;
     RAISE NOTICE 'nexora_app already exists, can log in and is restricted. Password unchanged.';
+  END IF;
+
+  SELECT * INTO d FROM pg_roles WHERE rolname = 'nexora_deleter';
+  IF NOT FOUND THEN
+    CREATE ROLE nexora_deleter NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS;
+    RAISE NOTICE 'Created restricted NOLOGIN role nexora_deleter.';
+  ELSE
+    problems := '{}';
+    IF d.rolsuper       THEN problems := problems || 'SUPERUSER'::text; END IF;
+    IF d.rolcreatedb    THEN problems := problems || 'CREATEDB'::text; END IF;
+    IF d.rolcreaterole  THEN problems := problems || 'CREATEROLE'::text; END IF;
+    IF d.rolreplication THEN problems := problems || 'REPLICATION'::text; END IF;
+    IF d.rolbypassrls   THEN problems := problems || 'BYPASSRLS'::text; END IF;
+    IF d.rolcanlogin    THEN problems := problems || 'LOGIN'::text; END IF;
+    IF cardinality(problems) > 0 THEN
+      RAISE EXCEPTION 'nexora_deleter exists but is misconfigured: %. Nothing was changed.',
+        array_to_string(problems, ', ');
+    END IF;
+  END IF;
+
+  SELECT * INTO m FROM pg_roles WHERE rolname = 'nexora_maintenance';
+  IF NOT FOUND THEN
+    CREATE ROLE nexora_maintenance NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS;
+    RAISE NOTICE 'Created restricted NOLOGIN role nexora_maintenance.';
+  ELSE
+    problems := '{}';
+    IF m.rolsuper       THEN problems := problems || 'SUPERUSER'::text; END IF;
+    IF m.rolcreatedb    THEN problems := problems || 'CREATEDB'::text; END IF;
+    IF m.rolcreaterole  THEN problems := problems || 'CREATEROLE'::text; END IF;
+    IF m.rolreplication THEN problems := problems || 'REPLICATION'::text; END IF;
+    IF m.rolbypassrls   THEN problems := problems || 'BYPASSRLS'::text; END IF;
+    IF m.rolcanlogin    THEN problems := problems || 'LOGIN'::text; END IF;
+    IF m.rolinherit     THEN problems := problems || 'INHERIT'::text; END IF;
+    IF cardinality(problems) > 0 THEN
+      RAISE EXCEPTION 'nexora_maintenance exists but is misconfigured: %. Nothing was changed.',
+        array_to_string(problems, ', ');
+    END IF;
   END IF;
 END
 $setup$;
