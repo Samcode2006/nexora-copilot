@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexora-backend"
+version = "0.1.0"
+description = "NEXORA FastAPI backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.162.2",
+    "uvicorn[standard]==0.54.0",
+    "pydantic-settings==2.16.2",
+    "sqlalchemy==2.1.8",
+    "greenlet==3.5.6",
+    "asyncpg==0.32.0",
+    "alembic==1.20.1",
+    "pyjwt[crypto]==2.15.1",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "ruff==0.17.4",
+]
+
+[tool.setuptools.packages.find]
+# Only the application package. `tests/` and the `alembic/` migrations folder are
+# not installed (the folder name `alembic` would otherwise shadow the library).
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
