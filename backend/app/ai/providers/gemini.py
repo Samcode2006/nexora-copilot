@@ -42,25 +42,27 @@ class GeminiProvider:
     def generate_structured(self, *, prompt: str, response_model: type[T]) -> T:
         """Call Gemini and validate its JSON output as the requested model."""
         try:
-            from google.genai import types
-
             response = self._client.models.generate_content(  # type: ignore[attr-defined]
                 model=self.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=response_model,
-                ),
+                # A plain dict is accepted by the google-genai SDK and keeps the SDK out of this
+                # call path, so an injected client works without the optional 'gemini' extra.
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": response_model,
+                },
             )
-            response_text = getattr(response, "text", None)
-            if not response_text:
-                raise LLMProviderError("Gemini returned an empty structured response.")
+        except (TypeError, AttributeError, NameError, AssertionError):
+            raise  # programming errors must surface, not become a silent fallback
+        except Exception as exc:  # SDK transport errors vary by SDK version.
+            raise LLMProviderError(f"Gemini request failed: {exc}") from exc
+
+        response_text = getattr(response, "text", None)
+        if not response_text:
+            raise LLMProviderError("Gemini returned an empty structured response.")
+        try:
             return response_model.model_validate_json(response_text)
         except ValidationError as exc:
             raise LLMProviderError(
                 f"Gemini response did not match {response_model.__name__}."
             ) from exc
-        except LLMProviderError:
-            raise
-        except Exception as exc:  # SDK transport errors vary by SDK version.
-            raise LLMProviderError(f"Gemini request failed: {exc}") from exc
