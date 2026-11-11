@@ -7,12 +7,17 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node --test tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.460.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^6.28.0",
+    "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -23,11 +28,14 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.4.20",
     "babel-plugin-react-compiler": "^1.0.0",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
     "vite": "^8.3.6"
