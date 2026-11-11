@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.ai.job_intelligence.schemas import JobListing
 from app.ai.resume_intelligence.profile_schemas import (
@@ -18,6 +19,7 @@ from .eligibility import assess_eligibility
 from .embeddings import (
     EmbeddingProvider,
     EmbeddingProviderError,
+    _embedding_error,
     create_embedding_provider_from_env,
 )
 from .evidence import is_supported_fact, to_reference
@@ -64,6 +66,7 @@ _SKILL_ALIASES = {
     "c plus plus": "c++",
     "c++": "c++",
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,8 +87,13 @@ class _EmbeddingSession:
             raw = list(self.provider.similarities(pairs))
         except EmbeddingProviderError:
             raise
-        except Exception as exc:
-            raise EmbeddingProviderError("Embedding provider failed.") from exc
+        # Replaceable embedding providers may raise implementation-specific
+        # exceptions; normalize those into an explicit keyword fallback.
+        except Exception as exc:  # noqa: BLE001
+            raise _embedding_error(
+                "Embedding provider failed.",
+                diagnostic_exception_type=type(exc).__name__,
+        ) from None
         if len(raw) != len(pairs):
             raise EmbeddingProviderError("Embedding provider returned the wrong number of scores.")
         output: list[float] = []
@@ -127,6 +135,7 @@ def match_jobs(
             provider = create_embedding_provider_from_env()
         except EmbeddingProviderError as exc:
             provider_warning = str(exc)
+            _log_embedding_failure(exc)
 
     if provider is not None:
         embedding_session = _EmbeddingSession(provider)
@@ -140,6 +149,7 @@ def match_jobs(
             provider_warning = (
                 "Semantic embeddings were unavailable; all jobs were rescored using the deterministic keyword baseline."
             )
+            _log_embedding_failure(exc)
             results = [
                 _score_job(profile, job, matching_config, None, provider_warning)
                 for job in jobs
@@ -177,6 +187,26 @@ def match_jobs(
     ]
 
 
+def _log_embedding_failure(error: EmbeddingProviderError) -> None:
+    message = str(error)
+    if message.startswith("sentence-transformers is not installed"):
+        safe_reason = "sentence-transformers is not installed; keyword fallback selected."
+    elif message.startswith("Unsupported JOB_MATCH_EMBEDDINGS"):
+        safe_reason = "Unsupported JOB_MATCH_EMBEDDINGS; keyword fallback selected."
+    elif message.startswith("JOB_MATCH_MODEL must be non-empty"):
+        safe_reason = "Invalid JOB_MATCH_MODEL configuration; keyword fallback selected."
+    else:
+        safe_reason = "Semantic embedding provider failed; keyword fallback selected."
+    exception_type = error.diagnostic_exception_type or type(error).__name__
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", exception_type):
+        exception_type = "EmbeddingProviderError"
+    _LOGGER.warning(
+        "Job matching embedding failure exception_type=%s; %s",
+        exception_type,
+        safe_reason,
+    )
+
+
 def _validate_profile(value: StudentProfile) -> StudentProfile:
     if isinstance(value, StudentProfile):
         return value
@@ -188,10 +218,10 @@ def _validate_profile(value: StudentProfile) -> StudentProfile:
 def _validate_jobs(value: Any) -> list[JobListing]:
     if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
         raise TypeError("job_listings must be a list or tuple of JobListing objects")
-    try:
-        return [job if isinstance(job, JobListing) else JobListing.model_validate(job) for job in value]
-    except ValidationError:
-        raise
+    return [
+        job if isinstance(job, JobListing) else JobListing.model_validate(job)
+        for job in value
+    ]
 
 
 def _score_job(
@@ -410,7 +440,6 @@ def _skill_dimension(
         )
     matched = sum(item.status == "matched" for item in assessments)
     score = 100 * matched / len(assessments) if assessments else None
-    missing = [item.job_skill for item in assessments if item.status == "not_evidenced"]
     explanation = (
         f"{matched} of {len(assessments)} listed {category} skills are evidenced; "
         "unmatched requirements mean not evidenced, not confirmed absent."

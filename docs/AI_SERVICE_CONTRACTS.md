@@ -11,7 +11,7 @@ parse_resume(
     content: bytes,
     filename: str,
     *,
-    max_file_bytes: int = 10 * 1024 * 1024,
+    max_file_bytes: int = 5_000_000,
 ) -> ParsedResume
 ```
 
@@ -21,7 +21,9 @@ not infer student facts. Errors are `ResumeParseError`, a `ValueError` with a
 stable `code` attribute (`invalid_filename`, `empty_file`, `file_too_large`,
 `unsupported_type`, `malformed_document`, `dependency_missing`, or
 `no_extractable_text`). Scanned PDFs currently need an OCR stage, which is not
-part of Phase 1.
+part of Phase 1. The default upload cap is exactly 5,000,000 bytes; a file at
+that size is accepted and a file one byte larger is rejected before document
+parsing. Callers can supply an explicit `max_file_bytes` override.
 
 ## Structured LLM calls
 
@@ -31,7 +33,12 @@ and `GEMINI_API_KEY` are configured. `LLMService.generate_structured(...)`
 accepts a feature-owned deterministic `fallback` callable and returns an
 `LLMResult` with `provider`, `is_fallback`, and (when applicable) `model` and
 `fallback_reason`. Consumers should surface `is_fallback` when presenting
-generated content.
+generated content. Retry counts are bounded to at most three attempts, and
+non-retryable configuration/authentication failures stop immediately. Public
+fallback reasons use safe failure categories rather than raw provider messages.
+A native Gemini client uses a 60-second request timeout. An injected client uses
+the provider-neutral dict configuration and does not require importing the
+optional Gemini SDK on the request path.
 
 ## Structured student profile extraction
 
@@ -255,7 +262,10 @@ validation.
 `CoverLetter` contains a greeting, opening, relevant experience, role relevance,
 closing, sign-off, evidence, validation report, and generation metadata. Missing
 company or student information is omitted or handled with a generic greeting;
-the service does not create recruiter names or company research.
+the service does not create recruiter names or company research. The closing is
+fixed to the canonical neutral boilerplate and `CoverLetter` validation rejects
+other closing text, including text supplied during direct construction or
+JSON reconstruction.
 
 ### Claim validation and student review
 
@@ -282,9 +292,9 @@ The backend-owned approval workflow remains outside this package.
 Tailoring uses the existing `LLMService` and configured `GeminiProvider`; it
 does not introduce a second provider framework. The LLM receives structured
 Pydantic response schemas and must cite profile evidence paths. The shared
-service retries invalid structured output once. Provider errors, invalid
-responses, or absent credentials use deterministic source-based ordering and
-cover-letter text. `generation.provider`, `is_fallback`, `generation_method`,
+service retries retryable provider failures and invalid structured output
+within the bounded attempt limit. Provider errors, invalid responses, or absent
+credentials use deterministic source-based ordering and cover-letter text. `generation.provider`, `is_fallback`, `generation_method`,
 warnings, and the validation report identify what was actually used. Live
 Gemini generation has not been exercised by the offline tests; they inject
 deterministic mock providers.
@@ -329,12 +339,14 @@ end_interview(session, reason="student_requested") -> InterviewSession
 Question counts are validated from 1 through 30. The session stores validated
 profile and job snapshots, the optional matching result, current and planned
 difficulty, all question/answer/evaluation turns, competency measurements, and
-status (`in_progress`, `completed`, or `terminated`). Session data is
-service-level only; persistence is the backend integration layer's job.
-`serialize_interview_session` omits expected answer points and rubric material
-by default. Trusted internal storage can explicitly set
-`include_evaluation_material=True`; do not use that representation in a
-student-visible response. `get_question_evaluation_material` also requires an
+status (`in_progress`, `completed`, or `terminated`). Validation requires every
+turn's complete question, answer, and evaluation to match the corresponding
+history entry. Session data is service-level only; persistence is the backend
+integration layer's job. `serialize_interview_session` omits evaluator-only
+answer guidance by default, but retains profile and answer snapshots. Its
+trusted `include_evaluation_material=True` flag only controls serialization; it
+does not authorize access. Project a privacy-appropriate response DTO before
+exposing serialized data to a student. `get_question_evaluation_material` also requires an
 explicit flag before it returns hidden guidance.
 
 ### Question generation and grounding
@@ -415,6 +427,7 @@ and the report's limitations.
 ## Install and configure
 
 ```powershell
+# Run from the backend/ directory (the backend owns this pyproject.toml).
 python -m pip install -e ".[dev,gemini]"
 $env:GEMINI_API_KEY = "..."
 ```

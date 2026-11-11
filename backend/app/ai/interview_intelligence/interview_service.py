@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.ai.job_intelligence.schemas import JobListing
 from app.ai.job_matching.schemas import JobMatch
@@ -17,6 +17,7 @@ from .question_generator import generate_interview_questions
 from .schemas import (
     AnswerEvaluation,
     CompetencyPerformance,
+    Difficulty,
     InterviewAnswer,
     InterviewQuestion,
     InterviewReport,
@@ -25,7 +26,6 @@ from .schemas import (
     InterviewSubmitRequest,
     InterviewTurn,
     InterviewType,
-    Difficulty,
     QuestionEvaluationMaterial,
 )
 
@@ -276,8 +276,11 @@ def serialize_interview_session(
     """Serialize session JSON; evaluation keys are omitted unless requested.
 
     Set ``include_evaluation_material=True`` only for trusted service-level
-    storage. The default representation is suitable for student-visible
-    output, and intentionally cannot be used to reconstruct hidden answer keys.
+    storage. This flag controls serialization only; it does not authorize the
+    caller or the resulting data. Enforce access control separately. The
+    default form omits evaluator-only keys and cannot reconstruct a resumable
+    session, but still contains the full profile and answer snapshots; apply
+    backend response projection and privacy rules before exposing session data.
     """
     payload = interview_session.model_dump(mode="json")
     if include_evaluation_material:
@@ -383,4 +386,4 @@ def _key(value: str) -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

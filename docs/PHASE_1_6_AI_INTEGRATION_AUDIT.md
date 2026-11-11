@@ -516,3 +516,35 @@ Gemini integration was verified by tests.
 **Source-change confirmation:** no Python source, tests, database models,
 migrations, routes, or shared interfaces were modified during this audit. The
 only requested artifact created is `docs/PHASE_1_6_AI_INTEGRATION_AUDIT.md`.
+
+
+## AI hardening integration follow-up (2026-11-11)
+
+The feature-branch integration adds validation and reliability improvements
+within the existing `app.ai` modules. Public service signatures and Pydantic
+field shapes remain unchanged. The AI package remains independent of FastAPI
+routes, SQLAlchemy, persistence, and backend task execution.
+
+- Resume parsing defaults to exactly 5,000,000 bytes, accepts the inclusive
+  boundary, rejects one byte above it before parsing, and preserves explicit
+  per-call size overrides.
+- Cover letters use one canonical neutral closing; `CoverLetter` rejects any
+  other closing during model construction or deserialization. Interview session
+  validation checks full question, answer, and evaluation record equality
+  between turn history and parallel histories.
+- Trusted interview serialization can be reconstructed with
+  `InterviewSession.model_validate_json`. Ordinary serialization still contains
+  profile and answer snapshots, so it is not a privacy-redacted API response.
+- Gemini, Remotive, and embedding failures use bounded retries, safe error
+  categories, and minimal diagnostics. Native Gemini clients use a finite
+  timeout; injected clients retain the SDK-independent plain-dict request path.
+  Live providers are not used by offline tests.
+- Offline workflow tests exercise resume parsing/profile extraction, job search,
+  normalization and matching, resume/cover-letter generation, and interview
+  generation, evaluation, serialization and reconstruction with deterministic
+  fixtures.
+
+The exact test commands, results, file reconciliation, and limitations for this
+integration are recorded in `docs/AI_HARDENING_INTEGRATION_REPORT.md`. The
+historical source-change confirmation above describes the audit snapshot before
+this follow-up.

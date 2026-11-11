@@ -35,7 +35,9 @@ def generate_draft(
             fallback=lambda: fallback,
             max_attempts=2,
         )
-    except Exception as exc:
+    # A custom provider adapter may raise SDK-specific exceptions. Keep the
+    # fallback boundary broad, but return only sanitized exception metadata.
+    except Exception as exc:  # noqa: BLE001
         # An unexpected adapter exception must not leak generated output or be
         # mislabeled as an LLM result. Re-run the feature-owned empty plan.
         result = LLMService().generate_structured(

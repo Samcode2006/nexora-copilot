@@ -12,14 +12,15 @@ from app.ai.resume_intelligence.profile_schemas import StudentProfile
 from .generation import DraftGeneration, generate_draft
 from .prompts import build_cover_letter_prompt
 from .schemas import (
+    CANONICAL_COVER_LETTER_CLOSING,
     CoverLetter,
     CoverLetterGenerationDraft,
     GenerationMetadata,
     OmittedClaim,
     TailoredResume,
     TailoringPreferences,
-    ValidationReport,
     ValidatedClaim,
+    ValidationReport,
 )
 from .validation import (
     SourceFact,
@@ -153,7 +154,7 @@ def generate_cover_letter(
         opening_paragraph=opening,
         relevant_experience_paragraph=relevant_experience,
         role_relevance_paragraph=role_relevance,
-        closing_paragraph="Thank you for considering my application. I would welcome the opportunity to discuss my application further.",
+        closing_paragraph=CANONICAL_COVER_LETTER_CLOSING,
         sign_off="Sincerely,",
         sign_off_name=sign_off_name,
         validation_report=report,

@@ -13,9 +13,43 @@ T = TypeVar("T", bound=BaseModel)
 class LLMProviderError(RuntimeError):
     """Base error for provider setup, transport, and response failures."""
 
+    category = "provider"
+    retryable = True
+
 
 class ProviderUnavailableError(LLMProviderError):
     """Raised when a provider cannot be used in the current environment."""
+
+    category = "configuration"
+    retryable = False
+    diagnostic_exception_type: str | None = None
+
+
+def _provider_error(
+    message: str,
+    *,
+    category: str = "provider",
+    retryable: bool = True,
+    diagnostic_exception_type: str | None = None,
+) -> LLMProviderError:
+    error = LLMProviderError(message)
+    error.category = category
+    error.retryable = retryable
+    error.diagnostic_exception_type = diagnostic_exception_type
+    return error
+
+
+def _unavailable_error(
+    message: str,
+    *,
+    category: str = "configuration",
+    diagnostic_exception_type: str | None = None,
+) -> ProviderUnavailableError:
+    error = ProviderUnavailableError(message)
+    error.category = category
+    error.retryable = False
+    error.diagnostic_exception_type = diagnostic_exception_type
+    return error
 
 
 class LLMProvider(Protocol):

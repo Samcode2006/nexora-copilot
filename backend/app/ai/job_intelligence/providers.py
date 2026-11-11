@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
+import math
 import os
 import threading
 import time
@@ -17,6 +19,7 @@ DEFAULT_REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
 DEFAULT_TIMEOUT_SECONDS = 8.0
 DEFAULT_CACHE_TTL_SECONDS = 6 * 60 * 60
 REMOTIVE_FETCH_LIMIT = 1000
+_LOGGER = logging.getLogger(__name__)
 
 
 class JobProviderError(RuntimeError):
@@ -76,10 +79,12 @@ class RemotiveJobProvider:
     ) -> None:
         if not endpoint.startswith("https://"):
             raise JobProviderConfigurationError("Remotive endpoint must use HTTPS.")
-        if timeout_seconds <= 0:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise JobProviderConfigurationError("Provider timeout must be positive.")
         if cache_ttl_seconds <= 0:
             raise JobProviderConfigurationError("Provider cache TTL must be positive.")
+        if not math.isfinite(retry_backoff_seconds):
+            raise JobProviderConfigurationError("Provider retry backoff must be finite.")
         self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -119,31 +124,55 @@ class RemotiveJobProvider:
                 payload = self._fetcher(url, self.timeout_seconds)
                 break
             except HTTPError as exc:
-                if attempt == 0 and exc.code in {429, 500, 502, 503, 504}:
+                retryable = exc.code in {429, 500, 502, 503, 504}
+                _LOGGER.warning(
+                    "Remotive provider request failed category=http_status HTTP %s attempt=%s retryable=%s",
+                    exc.code,
+                    attempt + 1,
+                    retryable and attempt == 0,
+                )
+                if attempt == 0 and retryable:
                     time.sleep(self._retry_backoff_seconds)
                     continue
-                raise JobProviderError(
-                    f"Remotive returned HTTP {exc.code}."
-                ) from exc
+                raise JobProviderError(f"Remotive returned HTTP {exc.code}.") from None
             except (TimeoutError, OSError, URLError) as exc:
+                _LOGGER.warning(
+                    "Remotive provider request failed category=network attempt=%s retryable=%s exception_type=%s",
+                    attempt + 1,
+                    attempt == 0,
+                    type(exc).__name__,
+                )
                 if attempt == 0:
                     time.sleep(self._retry_backoff_seconds)
                     continue
-                raise JobProviderError("Remotive request failed or timed out.") from exc
-            except Exception as exc:
-                raise JobProviderError("Remotive request failed.") from exc
+                raise JobProviderError("Remotive request failed or timed out.") from None
+            # Injected transports may raise SDK-specific exceptions. Sanitize
+            # them here rather than allowing raw provider details to escape.
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Remotive provider request failed category=unexpected exception_type=%s",
+                    type(exc).__name__,
+                )
+                raise JobProviderError("Remotive request failed.") from None
 
         if payload is None:
+            _LOGGER.warning("Remotive provider returned an empty response body.")
             raise JobProviderError("Remotive returned no response body.")
         try:
             response = json.loads(payload)
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
-            raise JobProviderResponseError("Remotive returned invalid JSON.") from exc
+            _LOGGER.warning(
+                "Remotive provider returned malformed JSON exception_type=%s",
+                type(exc).__name__,
+            )
+            raise JobProviderResponseError("Remotive returned invalid JSON.") from None
         if not isinstance(response, Mapping) or not isinstance(response.get("jobs"), list):
+            _LOGGER.warning("Remotive provider response did not contain a jobs array.")
             raise JobProviderResponseError(
                 "Remotive response must be an object containing a jobs array."
             )
         if any(not isinstance(job, Mapping) for job in response["jobs"]):
+            _LOGGER.warning("Remotive provider response contained a non-object job record.")
             raise JobProviderResponseError("Remotive jobs must be JSON objects.")
         return list(response["jobs"])
 
@@ -187,7 +216,7 @@ def _positive_float_env(name: str, default: float) -> float:
         value = float(os.getenv(name, str(default)))
     except ValueError as exc:
         raise JobProviderConfigurationError(f"{name} must be a number.") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise JobProviderConfigurationError(f"{name} must be positive.")
     return value
 

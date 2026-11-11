@@ -9,7 +9,8 @@ from collections import OrderedDict
 
 from .schemas import ParsedResume
 
-DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024
+# The shared upload contract's 5 MB limit is decimal: 5,000,000 bytes.
+DEFAULT_MAX_FILE_BYTES = 5_000_000
 
 _HEADING_ALIASES = {
     "summary": ("summary", "professional summary", "profile", "objective", "career objective"),
@@ -62,7 +63,7 @@ def parse_resume(
         raise ResumeParseError("The uploaded resume is empty.", code="empty_file")
     if len(content) > max_file_bytes:
         raise ResumeParseError(
-            f"The resume exceeds the {max_file_bytes // (1024 * 1024)} MB size limit.",
+            f"The resume exceeds the {max_file_bytes:,}-byte size limit.",
             code="file_too_large",
         )
 
