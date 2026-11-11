@@ -22,6 +22,20 @@ class Settings(BaseSettings):
     database_url: str = Field(..., min_length=1, repr=False)
     migration_database_url: str | None = Field(default=None, repr=False)
 
+    # AI provider (optional; deterministic fallback when unset)
+    gemini_api_key: str | None = Field(default=None, repr=False)
+    gemini_model: str = "gemini-2.5-flash"
+
+    # Resume upload and parsing (contract §5, §16)
+    resume_max_bytes: int = 5_242_880  # 5 MiB
+    resume_parse_max_concurrency: int = 2
+    rate_limit_resume_parses_per_hour: int = 10
+
+    # Task runner (contract §2, §16)
+    task_timeout_resume_parse_seconds: int = 60
+    task_watchdog_interval_seconds: int = 60
+    task_watchdog_grace_seconds: int = 30
+
     @field_validator("supabase_url")
     @classmethod
     def _strip_url(cls, v: str) -> str:
